@@ -1,0 +1,357 @@
+openapi: 3.0.3
+info:
+  title: PayFlow API
+  description: |
+    Subscription & Billing Management System.
+
+    **Payment simulation:** the /payments endpoints simulate a payment.
+    No real gateway is integrated and no card details are ever stored.
+    Pass `simulate: "failure"` to test a failed payment.
+  version: 1.0.0
+servers:
+  - url: http://localhost:5000
+tags:
+  - name: Auth
+  - name: Users
+  - name: Plans
+  - name: Subscriptions
+  - name: Payments
+  - name: Invoices
+  - name: Admin
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    User:
+      type: object
+      properties:
+        _id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [admin, customer] }
+    Plan:
+      type: object
+      properties:
+        _id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        price: { type: number }
+        currency: { type: string, example: INR }
+        billingInterval: { type: string, enum: [monthly, yearly] }
+        features: { type: array, items: { type: string } }
+        isActive: { type: boolean }
+    Subscription:
+      type: object
+      properties:
+        _id: { type: string }
+        user: { type: string }
+        plan: { $ref: '#/components/schemas/Plan' }
+        status: { type: string, enum: [active, cancelled, expired, pending] }
+        price: { type: number }
+        billingInterval: { type: string, enum: [monthly, yearly] }
+        startDate: { type: string, format: date-time }
+        endDate: { type: string, format: date-time }
+    Payment:
+      type: object
+      properties:
+        _id: { type: string }
+        amount: { type: number }
+        status: { type: string, enum: [succeeded, failed, pending] }
+        transactionRef: { type: string }
+        idempotencyKey: { type: string }
+    Invoice:
+      type: object
+      properties:
+        _id: { type: string }
+        invoiceNumber: { type: string }
+        amount: { type: number }
+        billingDate: { type: string, format: date-time }
+        paymentStatus: { type: string, enum: [paid, unpaid, failed] }
+    Error:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        message: { type: string }
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      tags: [Auth]
+      security: []
+      summary: Health check
+      responses:
+        '200': { description: OK }
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Register (always as customer, even if role=admin is sent)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string, example: Aarav Sharma }
+                email: { type: string, format: email, example: aarav@example.com }
+                password: { type: string, example: password123 }
+      responses:
+        '201': { description: Registered }
+        '409': { description: Email already registered }
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Login and receive a JWT
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200': { description: Logged in }
+        '401': { description: Invalid credentials }
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout (client discards its JWT)
+      responses: { '200': { description: Logged out } }
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      responses: { '200': { description: Current user } }
+  /api/v1/auth/forgot-password:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Request a password reset token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties: { email: { type: string, format: email } }
+      responses: { '200': { description: Reset token sent if account exists } }
+  /api/v1/auth/reset-password:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Reset password with a token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string }
+      responses: { '200': { description: Password reset } }
+  /api/v1/users/me:
+    get:
+      tags: [Users]
+      summary: My profile
+      responses: { '200': { description: Profile } }
+    put:
+      tags: [Users]
+      summary: Update my profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { name: { type: string } }
+      responses: { '200': { description: Updated } }
+  /api/v1/users:
+    get:
+      tags: [Users]
+      summary: List users (admin)
+      responses: { '200': { description: Users } }
+  /api/v1/users/{id}:
+    get:
+      tags: [Users]
+      summary: Get a user (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: User } }
+  /api/v1/users/{id}/role:
+    put:
+      tags: [Users]
+      summary: Change a user's role (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties: { role: { type: string, enum: [admin, customer] } }
+      responses: { '200': { description: Role updated } }
+  /api/v1/plans:
+    get:
+      tags: [Plans]
+      security: []
+      summary: "List active plans (admin: ?all=true for all plans)"
+      parameters:
+        - { name: all, in: query, schema: { type: boolean } }
+        - { name: billingInterval, in: query, schema: { type: string, enum: [monthly, yearly] } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses: { '200': { description: Plans } }
+    post:
+      tags: [Plans]
+      summary: Create a plan (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, description, price, billingInterval]
+              properties:
+                name: { type: string, example: Pro }
+                description: { type: string, example: For growing teams }
+                price: { type: number, example: 499 }
+                billingInterval: { type: string, enum: [monthly, yearly] }
+                features: { type: array, items: { type: string } }
+      responses: { '201': { description: Plan created } }
+  /api/v1/plans/{id}:
+    get:
+      tags: [Plans]
+      security: []
+      summary: Get a plan
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Plan } }
+    put:
+      tags: [Plans]
+      summary: Update a plan (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Plan updated } }
+    delete:
+      tags: [Plans]
+      summary: Delete a plan (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Plan deleted } }
+  /api/v1/subscriptions:
+    post:
+      tags: [Subscriptions]
+      summary: Subscribe to a plan (creates a pending subscription + unpaid invoice)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planId]
+              properties: { planId: { type: string } }
+      responses:
+        '201': { description: Subscription created }
+        '409': { description: Already have an active or pending subscription }
+    get:
+      tags: [Subscriptions]
+      summary: List subscriptions (own for customers, all for admins)
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [active, cancelled, expired, pending] } }
+        - { name: page, in: query, schema: { type: integer } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses: { '200': { description: Subscriptions } }
+  /api/v1/subscriptions/me/current:
+    get:
+      tags: [Subscriptions]
+      summary: Current (active or pending) subscription
+      responses: { '200': { description: Current subscription } }
+  /api/v1/subscriptions/{id}:
+    get:
+      tags: [Subscriptions]
+      summary: Get a subscription (owner or admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Subscription } }
+  /api/v1/subscriptions/{id}/change-plan:
+    put:
+      tags: [Subscriptions]
+      summary: Upgrade or downgrade a subscription
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [planId]
+              properties: { planId: { type: string } }
+      responses: { '200': { description: Plan changed } }
+  /api/v1/subscriptions/{id}/cancel:
+    put:
+      tags: [Subscriptions]
+      summary: Cancel a subscription
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Subscription cancelled } }
+  /api/v1/payments:
+    post:
+      tags: [Payments]
+      summary: Simulated payment for a subscription's invoice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subscriptionId]
+              properties:
+                subscriptionId: { type: string }
+                paymentMethod: { type: string, enum: [card, upi, netbanking] }
+                simulate: { type: string, enum: [success, failure] }
+                idempotencyKey: { type: string }
+      responses:
+        '201': { description: Payment created }
+        '409': { description: Already paid / duplicate }
+    get:
+      tags: [Payments]
+      summary: List payments (own for customers, all for admins)
+      responses: { '200': { description: Payments } }
+  /api/v1/payments/{id}:
+    get:
+      tags: [Payments]
+      summary: Get a payment (owner or admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Payment } }
+  /api/v1/invoices:
+    get:
+      tags: [Invoices]
+      summary: List invoices (own for customers, all for admins)
+      parameters:
+        - { name: paymentStatus, in: query, schema: { type: string, enum: [paid, unpaid, failed] } }
+      responses: { '200': { description: Invoices } }
+  /api/v1/invoices/{id}:
+    get:
+      tags: [Invoices]
+      summary: Get an invoice (owner or admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: Invoice } }
+  /api/v1/admin/dashboard:
+    get:
+      tags: [Admin]
+      summary: Dashboard analytics (admin)
+      responses: { '200': { description: Dashboard data } }
+  /api/v1/admin/expire-subscriptions:
+    post:
+      tags: [Admin]
+      summary: Mark past-due active subscriptions as expired (admin)
+      responses: { '200': { description: Expiry check result } }

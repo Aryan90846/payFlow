@@ -1,0 +1,23 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: payflow-mongo
+    restart: unless-stopped
+    ports:
+      - "27018:27017"
+    volumes:
+      - payflow-mongo-data:/data/db
+  api:
+    build: .
+    container_name: payflow-api
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017/payflow
+volumes:
+  payflow-mongo-data:
